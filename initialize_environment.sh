@@ -13,6 +13,8 @@ log_msg(){
         COLOR="${RED}"
     elif [[ $2 == "WARNING" ]];then
         COLOR="${YELLOW}"
+    elif [[ $2 == "DEBUG" ]];then
+        COLOR="${BLUE}"
     else
         COLOR="${END_COLOR}"
     fi
@@ -174,7 +176,7 @@ install_tools(){
             fi
 
             # normal clonning
-            git clone $url $path
+            git clone $url $path || sudo git clone $url $path
             
         done
     }
@@ -225,7 +227,7 @@ install_tools(){
         # creating reference with the array of the category
         declare -n ref=$category
         tools=( ${ref[@]} )
-        install_tools_wth_pkg_manager $category
+        install_tools_with_pkg_manager $category
 
         # programming_tools configuration here
         if [[ "${category}" = "programming_tools" && "${choice}" = "y" ]];then
@@ -355,6 +357,8 @@ main (){
 
     # setting up bash environment.
     additional_configurations
+
+    log_msg "DONE" "DEBUG"
 }
 
 main 
