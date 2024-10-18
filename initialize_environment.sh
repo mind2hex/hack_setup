@@ -206,6 +206,7 @@ install_tools(){
         SecLists@https://github.com/danielmiessler/SecLists@${wordlist_dir}/SecLists
         rockyou.txt@https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt@${wordlist_dir}/rockyou.txt
         FuzzDB@https://github.com/fuzzdb-project/fuzzdb@${wordlist_dir}/FuzzDB
+        BurpPro@https://github.com/xiv3r/Burpsuite-Professional@${github_dir}/cloned_tools/BurpPro
     )
 
     categories=(

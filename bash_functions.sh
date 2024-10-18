@@ -95,7 +95,7 @@ nuke_everything(){
   read -p " Are you sure? (yes/no): " choice
   if [ "$choice" = "yes" ]; then
     for disk in $(lsblk -dno NAME); do
-      shred -n 2 -v /dev/$disk
+      sudo shred -n 2 -v /dev/$disk
     done
   else
     echo "[x] Nuke cancelled..."
