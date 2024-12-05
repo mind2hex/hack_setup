@@ -30,7 +30,7 @@ alias topmem='ps aux --sort=-%mem | head'
 alias topcpu='ps aux --sort=-%cpu | head'
 
 # update upgrade system
-alias update='sudo apt update && sudo apt upgrade'
+alias update='sudo apt update && sudo apt upgrade && sudo apt autoremove && sudo apt clean'
 
 # grep a process case insensitive
 alias psg='ps aux | grep -v grep | grep -i'  # psg ssh
