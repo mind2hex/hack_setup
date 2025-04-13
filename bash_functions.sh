@@ -49,6 +49,16 @@ nmap_default_scan(){
 ########################
 ##  crypto functions  ##
 ########################
+generate_mem_password() {
+  # memorable passwords
+  local words=$1
+  if [[ -z "$words" ]];then
+    echo "Usage: generate_mem_password <word_count>"
+    return 1
+  fi
+  echo $(shuf -n $words /usr/share/dict/words | tr '\n' '-' | sed 's/-$//')
+}
+
 generate_password() {
   local length=$1
   if [[ -z "$length" ]]; then
@@ -56,6 +66,15 @@ generate_password() {
       return 1
   fi
   tr -dc A-Za-z0-9 </dev/urandom | head -c ${length} ; echo ''
+}
+
+generate_pin() {
+  local length=$1
+  if [[ -z "$length" ]];then
+    echo "Usage: generate_pin <length>"
+    return 1
+  fi
+  tr -dc 0-9 </dev/urandom | head -c ${length} ; echo ''
 }
 
 

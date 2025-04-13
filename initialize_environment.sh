@@ -23,6 +23,69 @@ log_msg(){
     echo -e "\n[!] ${COLOR} $@ ${END_COLOR}"
 }
 
+parse_args(){
+    # Parse command-line arguments
+    while [[ $# -gt 0 ]]; do
+        
+        case $1 in
+            -h|--help)
+                show_help
+                ;;
+            --skip-update)
+                SKIP_UPDATE=true
+                ;;
+            --skip-tools)
+                SKIP_TOOLS=true
+                ;;
+            --skip-pkg-tools)
+                SKIP_PKG_TOOLS=true
+                ;;
+            --skip-github-tools)
+                SKIP_GITHUB_TOOLS=true
+                ;;
+            --skip-config)
+                SKIP_CONFIG=true
+                ;;
+            --auto)
+                AUTOMODE=true
+                ;;
+            -o|--output)
+                if [[ -n "${2-}" && $2 != -* ]]; then
+                    output_file=$2
+                    shift
+                else
+                    error_exit "Argument for $1 is missing"
+                fi
+                ;;
+            *)
+                log_msg "Unknown option: $1" "ERROR"
+                exit
+                ;;
+        esac
+        shift
+    done    
+
+    : "${SKIP_UPDATE:=false}"
+    : "${SKIP_TOOLS:=false}"
+    : "${SKIP_PKG_TOOLS:=false}"
+    : "${SKIP_GITHUB_TOOLS:=false}"
+    : "${SKIP_CONFIG:=false}"
+    : "${AUTOMODE:=false}"
+
+}
+
+show_help(){
+    echo "Usage: ./initialize_environment.sh [options]"
+    echo "Options:"
+    echo "   -h, --help          show this help message"
+    echo "   --skip-update       skip update/upgrade step"
+    echo "   --skip-pkg-tools    skip pkg tool installation"
+    echo "   --skip-github-tools skip github tool installation"
+    echo "   --skip-config       skip additional configurations"
+    echo "   --auto              install all tools without asking"
+    exit
+}
+
 # Function to detect distribution and package manager
 detect_package_manager(){
     if [[ -f /etc/debian_version ]];then
@@ -75,237 +138,153 @@ setup_directories(){
     pentest_dir="${HOME}/PENTEST"
     dev_dir="${pentest_dir}/dev/"
     github_dir="${pentest_dir}/github/"
-    wordlist_dir="/usr/share/wordlists/"
+    wordlist_dir="${pentest_dir}/wordlists/"
 
     directories=(
         ${dev_dir}
         ${github_dir}/{my_tools,cloned_tools}
-        ${dev_dir}/{python,c++,bash,web,nasm}
-    )
-
-    privileged_directories=(
+        ${docker_dir}
+        ${dev_dir}/{python,c,cpp,bash,web,nasm,docker}
         ${wordlist_dir}
     )
-    
-    log_msg "Creating special directories"
+
+    log_msg "Creating working directories"
     for directory in ${directories[@]};do
         echo -e "\t- ${directory}"
         mkdir -p ${directory}
-    done
-
-    log_msg "Creating privileged special directories"
-    for directory in ${privileged_directories[@]};do
-        echo -e "\t- ${directory}"
-        sudo mkdir -p ${directory}
     done
 }
 
 # install tools using different resources (github, extern pages, package repositories, etc)
 install_tools(){
     install_tools_with_pkg_manager(){
-        # $1 tools category
-        log_msg "Do you want to install ${YELLOW}$1${END_COLOR}?\n${tools[@]}"
-        read -p "[y/n]: " choice
-        if [[ "${choice}" = "y" ]];then
-            for tool in ${tools[@]}; do
-                echo -e -n "\t -> Installing $tool..."
-                sudo $PACKAGE_MANAGER_INSTALL $tool >/dev/null 2>&1
-                if [[ $? -eq 0 ]];then
-                    echo "Done"
-                else
-                    echo "Failed"
-                fi
-            done
-        fi
+        for category in "${!categories[@]}"; do
+            log_msg "Do you want to install ${YELLOW}${category}${END_COLOR}?\n${categories[$category]}"
+
+            if [[ "${AUTOMODE}" != "true" ]];then
+                read -p "[y/n]: " choice
+            else
+                choice="y"
+            fi
+
+            if [[ "${choice}" == "y" || "${choice}" == "Y" ]];then
+                sudo $PACKAGE_MANAGER_INSTALL ${categories[$category]}
+
+                # aditional configurations                 
+                case $category in
+                    "virtualization")
+                        sudo adduser $(whoami) libvirt
+                        sudo adduser $(whoami) kvm
+                        ;;
+                    "administration")
+                        # conky configuration
+                        mkdir -p ${HOME}/.config/conky/
+                        cp ./conky.conf ${HOME}/.config/conky/
+                        if ! [[ -e $HOME/.config/autostart/conky.desktop ]];then
+                            echo -e "[Desktop Entry]\nType=Application\nExec=conky -d -p 6\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\nName=Conky\nComment=System monitor" > $HOME/.config/autostart/conky.desktop
+                        fi
+                        # neofetch configuration
+                        if [[ -z $( grep -m 1 -o "neofetch" ${HOME}/.bashrc ) ]];then
+                            echo -e "\nneofetch" >> ${HOME}/.bashrc
+                        fi
+                        ;;
+                esac
+            fi
+
+        done
     }
 
     install_tools_from_github(){
         for tool_url_path in ${github_tools[@]};do
             
-            # tool name
-            tool=$( echo "$tool_url_path" | cut -d "@" -f 1 )
-
             # tool url (github, gitlab, etc) should be a git reopsitory
-            url=$( echo "$tool_url_path"  | cut -d "@" -f 2 )
+            url=$( echo "$tool_url_path"  | cut -d "@" -f 1 )
 
             # path to where the tool will be cloned
-            path=$( echo "$tool_url_path" | cut -d "@" -f 3 )
+            path=$( echo "$tool_url_path" | cut -d "@" -f 2 )
+
+            # tool name
+            tool=$( basename $path )
             
             if [[ -e $path ]];then
-                log_msg "$tool already installed"
+                log_msg "$url already installed"
                 continue
             fi
 
             # EXPLOITDB installation
-            log_msg "installing $tool"
-            if [[ $tool = "exploitdb" ]];then
-                if ! [[ -d $path ]];then
-                    # cloning tool
-                    sudo git clone $url $path
+            log_msg "installing $url"
+            case $tool in
+                "exploitdb")
+                    if ! [[ -d $path ]];then
+                        # cloning tool
+                        sudo git clone $url $path
 
-                    # creating symbolic link to use exploitdb tools like searchsploit
-                    sudo ln -sf ${path}/searchsploit /usr/local/bin/searchsploit
+                        # creating symbolic link to use exploitdb tools like searchsploit
+                        sudo ln -sf ${path}/searchsploit /usr/local/bin/searchsploit
 
-                    # copying searchsploit profile to home dir
-                    cp -f ${path}/.searchsploit_rc ~/
+                        # copying searchsploit profile to home dir
+                        cp -f ${path}/.searchsploit_rc ${HOME}/
 
-                    # patch for searchsploit update functionality 
-                    # (it updates 'master' branch when the real branch is 'main')
-                    sudo sed -i 's/master/main/g' /opt/exploitdb/searchsploit 
-                else 
-                    echo "Already installed"
-                fi 
-                continue
-            fi
-
-            # LINPEAS  installation
-            if [[ $tool = "linpeas.sh" ]];then
-                mkdir -p $path
-                curl -L "$url" > $path/linpeas.sh
-                continue
-            fi 
-
-            # RTL8812AU drivers download
-            if [[ $tool = "rtl8812au" ]];then
-                git clone $url $path
-                # execute compilation process here...
-            fi
-
-            if [[ $tool = "rockyou.txt" ]];then
-                sudo wget "$url" -O "$path"
-            fi
-
-            # normal clonning
-            git clone $url $path || sudo git clone $url $path
-            
+                        # patch for searchsploit update functionality 
+                        # (it updates 'master' branch when the real branch is 'main')
+                        sudo sed -i 's/master/main/g' ${path}/searchsploit 
+                    else 
+                        echo "Already installed"
+                    fi
+                    ;;
+                "linpeas.sh")
+                    mkdir -p $path
+                    curl -L "$url" > $path/linpeas.sh
+                    ;;
+                "rtl8812au")
+                    git clone $url $path
+                    # execute compilation process here...
+                    ;;
+                "rockyou.txt")
+                    wget "$url" -O "$path"
+                    ;;
+                *)
+                    git clone $url $path 
+            esac
         done
     }
 
     # tools categories here, add or delete tools if needed
-    programming_tools=( python3 python3-venv python3-pip emacs git gdb )
-    virtualization_tools=( qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virt-manager )
-    container_tools=( docker.io docker-compose )
-    system_tools=( build-essential terminator conky-all neofetch htop tree openssh-server )
-    network_analysis_tools=( wireshark netdiscover arping )
-    network_security_tools=( aircrack-ng reaver bettercap nmap )
-    radio_tools=( gnuradio gqrx-sdr rtl-sdr hackrf )
-    web_security_tools=( wfuzz sqlmap openssl )
-    anonymity_tools=( tor torbrowser-launcher proxychains4 macchanger )
-    cracking_tools=( hydra john hashcat hashcat-nvidia hcxtools crunch )
-    malware_detection_tools=( rkhunter chkrootkit clamav )
-    binary_analysis_tools=( binwalk )
+    declare -A categories
+    categories["development"]="python3 python3-venv python3-pip emacs git gdb"
+    categories["virtualization"]="qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virt-manager"
+    categories["containerization"]="docker.io docker-compose"
+    categories["administration"]="build-essential terminator conky-all neofetch htop tree openssh-server"
+    categories["networking"]="wireshark netdiscover arping aircrack-ng reaver bettercap nmap"
+    categories["radio"]="gnuradio gqrx-sdr rtl-sdr hackrf"
+    categories["web-pentesting"]="wfuzz sqlmap openssl"
+    categories["anonymization"]="tor torbrowser-launcher proxychains4 macchanger"
+    categories["cracking"]="hydra john hashcat hashcat-nvidia hcxtools crunch"
+    categories["malware-detection"]="rkhunter chkrootkit clamav"
+    categories["binary-analysis"]="binwalk ghidra"
+    categories["osint"]="spiderfoot"
 
     github_tools=(
-        exploitdb@https://gitlab.com/exploit-database/exploitdb.git@/opt/exploitdb
-        webToolkit@https://github.com/mind2hex/webtoolkit@${github_dir}/my_tools/webToolkit
-        NetRunner@https://github.com/mind2hex/NetRunner@${github_dir}/my_tools/NetRuner
-        TCPCobra@https://github.com/mind2hex/TCPCobra@${github_dir}/my_tools/TCPCobra
-        Hackpack_usb@https://github.com/mind2hex/Hackpack_usb@${github_dir}/my_tools/Hackpack_usb
-        linpeas.sh@https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh@${github_dir}/cloned_tools/LinPeas/
-        rtl8812au@https://github.com/aircrack-ng/rtl8812au.git@${github_dir}/cloned_tools/rtl8812au
-        SecLists@https://github.com/danielmiessler/SecLists@${wordlist_dir}/SecLists
-        rockyou.txt@https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt@${wordlist_dir}/rockyou.txt
-        FuzzDB@https://github.com/fuzzdb-project/fuzzdb@${wordlist_dir}/FuzzDB
-        BurpPro@https://github.com/xiv3r/Burpsuite-Professional@${github_dir}/cloned_tools/BurpPro
+        https://gitlab.com/exploit-database/exploitdb.git@${github_dir}/cloned_tools/exploitdb
+        https://github.com/mind2hex/webtoolkit@${github_dir}/my_tools/webtoolkit
+        https://github.com/mind2hex/NetRunner@${github_dir}/my_tools/NetRunner
+        https://github.com/mind2hex/TCPCobra@${github_dir}/my_tools/TCPCobra
+        https://github.com/mind2hex/Hackpack_usb@${github_dir}/my_tools/Hackpack_usb
+        https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh@${github_dir}/cloned_tools/LinPeas/linpeas.sh
+        https://github.com/aircrack-ng/rtl8812au.git@${github_dir}/cloned_tools/rtl8812au
+        https://github.com/danielmiessler/SecLists@${wordlist_dir}/SecLists
+        https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt@${wordlist_dir}/rockyou.txt
+        https://github.com/fuzzdb-project/fuzzdb@${wordlist_dir}/FuzzDB
+        https://github.com/xiv3r/Burpsuite-Professional@${github_dir}/cloned_tools/BurpPro
     )
 
-    categories=(
-        programming_tools
-        virtualization_tools
-        container_tools
-        system_tools
-        network_analysis_tools
-        network_security_tools
-        radio_tools
-        web_security_tools
-        anonymity_tools
-        cracking_tools
-        malware_detection_tools
-        binary_analysis_tools
-    )
+    if ! [[ $SKIP_PKG_TOOLS == "true" ]];then
+        install_tools_with_pkg_manager
+    fi
 
-    for category in ${categories[@]};do
-        # creating reference with the array of the category
-        declare -n ref=$category
-        tools=( ${ref[@]} )
-        install_tools_with_pkg_manager $category
-
-        # programming_tools configuration here
-        if [[ "${category}" = "programming_tools" && "${choice}" = "y" ]];then
-            # python libraries
-            $PACKAGE_MANAGER_INSTALL python3-scapy 
-            $PACKAGE_MANAGER_INSTALL python3-pwntools 
-            $PACKAGE_MANAGER_INSTALL python3-requests 
-            $PACKAGE_MANAGER_INSTALL python3-pycrypto 
-        fi
-        
-        # virtualization_tools configuration here
-        if [[ $category = "virtualization_tools" && "${choice}" = "y" ]];then
-            # add user to libvirt group to manage virtual machines without root permissions
-            sudo adduser $(whoami) libvirt
-            sudo adduser $(whoami) kvm
-        fi
-
-        # container_tools configuration here
-        if [[ $category = "container_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # system_tools configuration here
-        if [[ $category = "system_tools" && "${choice}" = "y" ]];then
-            # conky configuration
-            mkdir -p ${HOME}/.config/conky/
-            cp ./conky.conf ${HOME}/.config/conky/            
-
-            # neofetch configuration
-            if [[ -z $( grep -m 1 -o "neofetch" ~/.bashrc ) ]];then
-                echo -e "\nneofetch" >> ~/.bashrc
-            fi
-        fi
-
-        # network_analysis_tools configuration here
-        if [[ $category = "network_analysis_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # network_security_tools configuration here
-        if [[ $category = "network_security_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # radio_tools configuration here
-        if [[ $category = "radio_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # web_security_tools configuration here
-        if [[ $category = "web_security_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # anonymity_tools configuration here
-        if [[ $category = "anonymity_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # cracking_tools configuration here
-        if [[ $category = "cracking_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # malware_detection_tools configuration here
-        if [[ $category = "malware_detection_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-        # binary_analysis_tools configuration here
-        if [[ $category = "binary_analysis_tools" && "${choice}" = "y" ]];then
-            echo -n "" 
-        fi
-
-    done
-
-    install_tools_from_github
+    if ! [[ $SKIP_GITHUB_TOOLS == "true" ]];then
+        install_tools_from_github
+    fi
 
     # extern tools resources:
     # code (visualstudiocode) https://code.visualstudio.com/
@@ -316,39 +295,48 @@ install_tools(){
 
 additional_configurations(){
     # setting up bash_aliases
-    aliases_path="./bash_aliases.sh"    
-    log_msg "Copying ${aliases_path} to ~/.bash_aliases"
-    cp -f ${aliases_path} ~/.bash_aliases
-    if [[ -z $( grep ". ~/.bash_aliases" ~/.bashrc ) ]];then
-        echo -e "\n. ~/.bash_aliases" >> ~/.bashrc
+    log_msg "Copying ./bash_aliases.sh to ${HOME}/.bash_aliases"
+    cp -f ./bash_aliases.sh ${HOME}/.bash_aliases
+    if [[ -z $( grep ". ${HOME}/.bash_aliases" ${HOME}/.bashrc ) ]];then
+        echo -e "\n. ${HOME}/.bash_aliases" >> ${HOME}/.bashrc
     fi
 
     # setting up bash functions
-    functions_path="./bash_functions.sh"
-    log_msg "Copying ${functions_path} to ~/.bash_functions"
-    cp -f ${functions_path} ~/.bash_functions
-    if [[ -z $( grep -o ". ~/.bash_functions" ~/.bashrc ) ]];then
-        echo -e "\n. ~/.bash_functions" >> ~/.bashrc
+    log_msg "Copying ./bash_functions.sh to ${HOME}/.bash_functions"
+    cp -f ./bash_functions.sh ${HOME}/.bash_functions
+    if [[ -z $( grep -o ". ${HOME}/.bash_functions" ${HOME}/.bashrc ) ]];then
+        echo -e "\n. ${HOME}/.bash_functions" >> ${HOME}/.bashrc
     fi
 
     # setting up hosts
     log_msg "Adding wifi pineapple address to /etc/hosts"
-    wifi_pineapple_addr="172.16.42.1"
-    hosts=$( grep -o "${wifi_pineapple_addr}" /etc/hosts )
-    if [[ -z "${hosts}" ]];then
-	    echo -e "${wifi_pineapple_addr}\twifi-pineapple.net\t# port 1471" | sudo tee -a /etc/hosts > /dev/null
-    fi
+    declare -A tool_addresses
+    tool_addresses["wifi-pineapple"]="172.16.42.1"
+    tool_addresses["bash-bunny"]="172.16.64.64"
+    tool_addresses["lan-turtle"]="172.16.84.1"
+    for tool in "${!tool_addresses[@]}";do
+        if [[ -z $(grep -m 1 "${tool_addresses[$tool]}" /etc/hosts) ]];then
+            echo -e "${tool_addresses[$tool]}\t$tool" | sudo tee -a /etc/hosts
+        else 
+            echo -e "${tool_addresses[$tool]}\t$tool"
+        fi
+    done
 }
 
 main (){
+    parse_args $@
+
     # request sudo rights once
+    log_msg "requesting sudo rights" "DEBUG"
     sudo whoami > /dev/null
 
     # selecting a packet manager
     detect_package_manager
 
     # initial update upgrade
-    update_upgrade    
+    if ! [[ $SKIP_UPDATE == "true" ]];then
+        update_upgrade    
+    fi
 
     # creating directory structure
     setup_directories
@@ -357,12 +345,14 @@ main (){
     install_tools
 
     # setting up bash environment.
-    additional_configurations
+    if ! [[ $SKIP_CONFIG == "true" ]];then
+        additional_configurations
+    fi
 
     log_msg "DONE" "DEBUG"
 }
 
-main 
+main $@
 
 # add ngrok to tools
 #  curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list && sudo apt update && sudo apt install ngrok
