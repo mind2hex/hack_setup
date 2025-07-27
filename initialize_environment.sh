@@ -142,7 +142,7 @@ setup_directories(){
 
     directories=(
         ${dev_dir}
-        ${github_dir}/{my_tools,cloned_tools}
+        ${github_dir}/{my_repos,cloned_repos,research}
         ${docker_dir}
         ${dev_dir}/{python,c,cpp,bash,web,nasm,docker}
         ${wordlist_dir}
